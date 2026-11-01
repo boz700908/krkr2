@@ -5,6 +5,8 @@ on:
   workflow_dispatch:
 
 env:
+  # 中转一下：secrets 不能在步骤级 if 里直接用
+  NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
   VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite"
   VCPKG_INSTALL_OPTIONS: "--debug"
 
@@ -61,7 +63,7 @@ jobs:
 
       - name: Add NuGet sources
         # fork 上通常没有 NUGET_API_KEY：没有就直接跳过，vcpkg 会退回从源码编译
-        if: ${{ secrets.NUGET_API_KEY != '' }}
+        if: ${{ env.NUGET_API_KEY != '' }}
         shell: bash
         run: |
           mono `${{ env.VCPKG_ROOT }}/vcpkg fetch nuget | tail -n 1` \

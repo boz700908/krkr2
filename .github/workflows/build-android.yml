@@ -109,7 +109,7 @@ jobs:
 
       - name: Add NuGet sources
         # fork 上通常没有 NUGET_API_KEY：没有就直接跳过，vcpkg 会退回从源码编译
-        if: ${{ secrets.NUGET_API_KEY != '' }}
+        if: ${{ env.NUGET_API_KEY != '' }}
         shell: bash
         run: |
           mono `${{ env.VCPKG_ROOT }}/vcpkg fetch nuget | tail -n 1` \
