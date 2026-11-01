@@ -210,6 +210,10 @@ inline bool Speak(const std::string &utf8, bool flush) {
 }
 
 // 提示音：随程序分发的 sounds/*.wav（原样取自 CPyMO）
+// 注意 winmm.h 把 PlaySound 定成了 PlaySoundW 宏，会把下面的函数改掉，先解掉。
+#ifdef PlaySound
+#undef PlaySound
+#endif
 inline void PlaySound(int type) {
     const wchar_t *name = type == 1 ? L"enter.wav" : (type == 2 ? L"menu.wav" : L"select.wav");
     if(type != 1 && type != 2 && type != 3)

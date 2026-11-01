@@ -89,6 +89,8 @@ inline bool IsVisibleChain(cocos2d::Node *node) {
     return true;
 }
 
+inline std::string Clean(const std::string &s);
+
 // 控件没有文字时的内部名字：Csd／代码里给的节点名，或者皮肤图/精灵的文件名。
 // 绝不编造名字 —— 都拿不到就返回空，调用方据此跳过这一项。
 inline std::string InternalNameOf(cocos2d::Node *node, int depth = 0) {
@@ -97,20 +99,8 @@ inline std::string InternalNameOf(cocos2d::Node *node, int depth = 0) {
     const std::string name = Clean(node->getName());
     if(!name.empty())
         return name;
-    if(cocos2d::Sprite *sprite = dynamic_cast<cocos2d::Sprite *>(node)) {
-        if(sprite->getSpriteFrame()) {
-            std::string file = sprite->getSpriteFrame()->getTextureFilename();
-            const size_t slash = file.find_last_of("/\\");
-            if(slash != std::string::npos)
-                file = file.substr(slash + 1);
-            const size_t dot = file.find_last_of('.');
-            if(dot != std::string::npos && dot > 0)
-                file = file.substr(0, dot);
-            file = Clean(file);
-            if(!file.empty())
-                return file;
-        }
-    }
+    // 图片按钮：cocos 3.17 的 SpriteFrame 没有保存纹理文件名，纹理路径也没有可移植接口，
+    // 所以这里不猜名字，落到子节点递归；都拿不到就返回空（项仍在，只是不朗读）。
     const cocos2d::Vector<cocos2d::Node *> &children = node->getChildren();
     for(size_t i = 0; i < children.size(); ++i) {
         const std::string sub = InternalNameOf(children.at(i), depth + 1);
