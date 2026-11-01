@@ -18,6 +18,10 @@
 
 namespace TVPNarrationPlatform {
 
+// cocos 的 JNI 小工具都在 cocos2d 命名空间里
+using cocos2d::JniHelper;
+using cocos2d::JniMethodInfo;
+
 inline const char *JavaClass() { return "org/tvp/kirikiri2/KR2Activity"; }
 
 inline std::atomic<bool> &JavaAvailable() {

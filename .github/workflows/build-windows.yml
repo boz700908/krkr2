@@ -5,7 +5,9 @@ on:
   workflow_dispatch:
 
 env:
-  VCPKG_BINARY_SOURCES: "clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite"
+  # 上游用 GitHub Packages 的 nuget 二进制缓存，需要 NUGET_API_KEY；
+  # fork 上没有这个 secret 时推送会失败并让 vcpkg install 中止，所以这里关掉缓存。
+  VCPKG_BINARY_SOURCES: "clear"
   VCPKG_INSTALL_OPTIONS: "--debug"
 
 jobs:
