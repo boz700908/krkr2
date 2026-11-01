@@ -922,6 +922,19 @@ void TVPWindowLayer::OnKeyPress(tjs_uint16 vk, int repeat, bool prevkeystate,
 
 namespace {
 // 尽早把 visual 的朗读钩子接到规则层（此处是 environ，能拿到平台后端）
+// 无障碍：问游戏要它当前的光标位置（图像坐标）。走 iWindowLayer::GetCursorPos，
+// 不去碰 TVPWindowLayer 的私有字段。
+static bool TVPNarrationCursorImagePos(int &x, int &y) {
+    TVPWindowLayer *lay = TVPWindowLayer::_currentWindowLayer;
+    if(!lay)
+        return false;
+    tjs_int cx = 0, cy = 0;
+    lay->GetCursorPos(cx, cy);
+    x = (int) cx;
+    y = (int) cy;
+    return true;
+}
+
 // 无障碍：把游戏内鼠标移到指定窗口图像坐标（只移动、不点击）
 static void TVPNarrationMoveMouseImpl(int x, int y) {
     tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
@@ -929,10 +942,8 @@ static void TVPNarrationMoveMouseImpl(int x, int y) {
         return;
     if(x < 0 || y < 0) {
         // 负坐标：用游戏自己记录的光标位置（图像坐标），即「移到手指刚点的位置」
-        if(!TVPWindowLayer::_currentWindowLayer)
+        if(!TVPNarrationCursorImagePos(x, y))
             return;
-        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
-        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
     }
     TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y,
                                                     TVPGetCurrentShiftKeyState()),
@@ -943,7 +954,10 @@ static void TVPNarrationMoveMouseImpl(int x, int y) {
 // 这里按 GLView 视口与图层缩放比换算（与 SetCursorPos 互为逆运算）。
 static void TVPNarrationHoverPixelsImpl(int px, int py) {
     TVPWindowLayer *lay = TVPWindowLayer::_currentWindowLayer;
-    if(!lay || !lay->PrimaryLayerArea)
+    if(!lay)
+        return;
+    cocos2d::Node *area = lay->GetPrimaryArea();
+    if(!area)
         return;
     cocos2d::GLView *glview = cocos2d::Director::getInstance()->getOpenGLView();
     if(!glview)
@@ -956,9 +970,9 @@ static void TVPNarrationHoverPixelsImpl(int px, int py) {
     const cocos2d::Size frame = glview->getFrameSize();
     const cocos2d::Vec2 world((px - vp.origin.x) / sx,
                               (frame.height - py - vp.origin.y) / sy);
-    const cocos2d::Vec2 local = lay->PrimaryLayerArea->convertToNodeSpace(world);
+    const cocos2d::Vec2 local = area->convertToNodeSpace(world);
     const int ix = (int) local.x;
-    const int iy = (int) (lay->PrimaryLayerArea->getContentSize().height - local.y);
+    const int iy = (int) (area->getContentSize().height - local.y);
     TVPNarrationMoveMouseImpl(ix, iy);
 }
 
@@ -969,10 +983,8 @@ static void TVPNarrationRightClickImpl(int x, int y) {
         return;
     const tjs_uint32 shift = TVPGetCurrentShiftKeyState();
     if(x < 0 || y < 0) {
-        if(!TVPWindowLayer::_currentWindowLayer)
+        if(!TVPNarrationCursorImagePos(x, y))
             return;
-        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
-        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
     }
     TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y, shift));
     TVPPostInputEvent(new tTVPOnMouseDownInputEvent(win, x, y, ::mbRight, shift));
@@ -987,10 +999,8 @@ static void TVPNarrationTapImageImpl(int x, int y) {
         return;
     const tjs_uint32 shift = TVPGetCurrentShiftKeyState();
     if(x < 0 || y < 0) {
-        if(!TVPWindowLayer::_currentWindowLayer)
+        if(!TVPNarrationCursorImagePos(x, y))
             return;
-        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
-        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
     }
     TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y, shift));
     TVPPostInputEvent(new tTVPOnMouseDownInputEvent(win, x, y, ::mbLeft, shift));
