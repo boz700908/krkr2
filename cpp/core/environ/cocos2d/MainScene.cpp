@@ -24,6 +24,7 @@
 #include "RenderManager.h"
 #include "ui/UIButton.h"
 #include "ui/csd/CsdUIFactory.h"
+#include "a11y/NarrationUi.h"
 
 #include "CCKeyCodeConv.h"
 #include "RenderUtils.h"
@@ -544,6 +545,8 @@ void TVPMainScene::pushUIForm(cocos2d::Node *ui, eEnterAni ani) {
         ui->runAction(EaseQuadraticActionOut::create(
             MoveTo::create(UI_CHANGE_DURATION, Vec2::ZERO)));
     }
+    // 无障碍：进页是明确的状态改变点（CPyMO 原则：进页即报标题与第一项）
+    TVPNarration::NotifyUiChanged(UINode);
 }
 
 void TVPMainScene::popUIForm(cocos2d::Node *form, eLeaveAni ani) {
@@ -563,6 +566,8 @@ void TVPMainScene::popUIForm(cocos2d::Node *form, eLeaveAni ani) {
         if(form)
             CCAssert(form == ui, "must be the same form");
         ui->removeFromParent();
+        // 无障碍：出页（返回上一层）后重报上一页当前项
+        TVPNarration::NotifyUiChanged(UINode);
     } else if(ani == eLeaveAniLeaveFromLeft) {
         Node *ui = children.back();
         if(form)
@@ -583,7 +588,10 @@ void TVPMainScene::popUIForm(cocos2d::Node *form, eLeaveAni ani) {
             MoveTo::create(UI_CHANGE_DURATION, Vec2(size.width, 0))));
         this->runAction(Sequence::createWithTwoActions(
             DelayTime::create(UI_CHANGE_DURATION),
-            CallFunc::create([ui] { ui->removeFromParent(); })));
+            CallFunc::create([this, ui] {
+                ui->removeFromParent();
+                TVPNarration::NotifyUiChanged(UINode);
+            })));
     } else if(ani == eLeaveToBottom) {
         cocos2d::Node *ColorMask = children.back();
         ColorMask->runAction(FadeOut::create(UI_CHANGE_DURATION));
@@ -594,7 +602,10 @@ void TVPMainScene::popUIForm(cocos2d::Node *form, eLeaveAni ani) {
             UI_CHANGE_DURATION, Vec2(0, -ui->getContentSize().height))));
         runAction(Sequence::createWithTwoActions(
             DelayTime::create(UI_CHANGE_DURATION),
-            CallFunc::create([=]() { ColorMask->removeFromParent(); })));
+            CallFunc::create([this, ColorMask]() {
+                ColorMask->removeFromParent();
+                TVPNarration::NotifyUiChanged(UINode);
+            })));
     }
 }
 
@@ -695,6 +706,17 @@ tjs_uint TVPGetGraphicCacheTotalBytes();
 
 void TVPMainScene::update(float delta) {
     ::Application->Run();
+    // 无障碍：主触发点是 pushUIForm/popUIForm/触摸/按键（状态改变处）；
+    // 这里只做「异步填充内容」的兜底核对（如文件列表延迟加载完成），
+    // 频率放慢到 0.5 秒，朗读层自身去重，不会重复朗读。
+    {
+        static float a11yPollTimer = 0.0f;
+        a11yPollTimer += delta;
+        if(a11yPollTimer >= 0.5f) {
+            a11yPollTimer = 0.0f;
+            TVPNarration::PollUi(UINode, GameNode);
+        }
+    }
     //	if (TVPWindowLayer::_currentWindowLayer)
     // TVPWindowLayer::_currentWindowLayer->UpdateOverlay();
     iTVPTexture2D::RecycleProcess();
@@ -803,12 +825,70 @@ float TVPMainScene::getUIScale() {
     return uiscale;
 }
 
+// 无障碍：桌面端的动作入口。Alt + 方向/回车/转义/字母 交给朗读层，
+// 其余按键原样留给游戏（安卓端由手势层 dispatch 同样的动作编号）。
+static bool g_a11yAltDown = false;
+
+static bool TVPA11yHandleKey(cocos2d::EventKeyboard::KeyCode keyCode) {
+    using cocos2d::EventKeyboard;
+    if(keyCode == EventKeyboard::KeyCode::KEY_LEFT_ALT ||
+       keyCode == EventKeyboard::KeyCode::KEY_RIGHT_ALT) {
+        g_a11yAltDown = true;
+        return false;
+    }
+    if(!g_a11yAltDown || !TVPNarration::IsEnabled())
+        return false;
+    int action = -1;
+    switch(keyCode) {
+        case EventKeyboard::KeyCode::KEY_UP_ARROW:
+            action = TVPNarration::ACTION_UP;
+            break;
+        case EventKeyboard::KeyCode::KEY_DOWN_ARROW:
+            action = TVPNarration::ACTION_DOWN;
+            break;
+        case EventKeyboard::KeyCode::KEY_LEFT_ARROW:
+            action = TVPNarration::ACTION_LEFT;
+            break;
+        case EventKeyboard::KeyCode::KEY_RIGHT_ARROW:
+            action = TVPNarration::ACTION_RIGHT;
+            break;
+        case EventKeyboard::KeyCode::KEY_ENTER:
+            action = TVPNarration::ACTION_OK;
+            break;
+        case EventKeyboard::KeyCode::KEY_ESCAPE:
+            action = TVPNarration::ACTION_CANCEL;
+            break;
+        case EventKeyboard::KeyCode::KEY_C:
+            action = TVPNarration::ACTION_COPY;
+            break;
+        case EventKeyboard::KeyCode::KEY_V:
+            action = TVPNarration::ACTION_APPEND_COPY;
+            break;
+        case EventKeyboard::KeyCode::KEY_R:
+            action = TVPNarration::ACTION_REPEAT;
+            break;
+        case EventKeyboard::KeyCode::KEY_S:
+            action = TVPNarration::ACTION_SKIP;
+            break;
+        default:
+            return false;
+    }
+    TVPNarration::DoAction(action);
+    return true;
+}
+
 void TVPMainScene::onKeyPressed(EventKeyboard::KeyCode keyCode, Event *event) {
+    if(TVPA11yHandleKey(keyCode))
+        return;
     Vector<Node *> &uiChild = UINode->getChildren();
     if(!uiChild.empty()) {
         iTVPBaseForm *uiform = static_cast<iTVPBaseForm *>(uiChild.back());
+        // 无障碍：表单自己的按键处理一律保留（含它自己的音效/动画/特殊逻辑），
+        // 只在处理完之后把「当前状态」读出去；无障碍用户另有 Alt+ 组合键入口。
         if(uiform)
             uiform->onKeyPressed(keyCode, event);
+        // 无障碍：表单自己消化按键后焦点/数值可能已变，立刻朗读当前项
+        TVPNarration::NotifyUiChanged(UINode);
         return;
     }
     switch(keyCode) {
@@ -866,6 +946,9 @@ void TVPMainScene::onKeyPressed(EventKeyboard::KeyCode keyCode, Event *event) {
 }
 
 void TVPMainScene::onKeyReleased(EventKeyboard::KeyCode keyCode, Event *event) {
+    if(keyCode == EventKeyboard::KeyCode::KEY_LEFT_ALT ||
+       keyCode == EventKeyboard::KeyCode::KEY_RIGHT_ALT)
+        g_a11yAltDown = false;
 #ifdef _DEBUG
     if(keyCode == EventKeyboard::KeyCode::KEY_PAUSE)
         return;

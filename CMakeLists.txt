@@ -131,6 +131,29 @@ if(NOT ANDROID)
         cocos_get_resource_path(APP_RES_DIR ${APP_NAME})
         cocos_copy_target_res(${APP_NAME} LINK_TO ${APP_RES_DIR} FOLDERS ${GAME_RES_FOLDER})
     endif()
+
+    # 无障碍：随程序分发朗读后端与提示音（资源原样取自 CPyMO）
+    #   Windows : tolk.dll 及其同目录的屏幕阅读器桥接 DLL、sounds/*.wav
+    #   Linux   : sounds/*.wav（paplay/aplay/ffplay 播放）
+    #   macOS   : sounds/*.wav（afplay 播放），拷进 .app 的 MacOS 目录
+    if(WINDOWS)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64")
+            set(KRKR2_TOLK_ARCH arm64)
+        elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+            set(KRKR2_TOLK_ARCH x86)
+        else()
+            set(KRKR2_TOLK_ARCH x64)
+        endif()
+        set(KRKR2_A11Y_TOLK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cpp/core/environ/a11y/tolk/${KRKR2_TOLK_ARCH}/Release")
+        add_custom_command(TARGET ${APP_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${KRKR2_A11Y_TOLK_DIR}" "$<TARGET_FILE_DIR:${APP_NAME}>/tolk"
+            VERBATIM)
+    endif()
+    if(LINUX OR APPLE)
+        add_custom_command(TARGET ${APP_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/cpp/core/environ/a11y/sounds" "$<TARGET_FILE_DIR:${APP_NAME}>/sounds"
+            VERBATIM)
+    endif()
 endif()
 
 if(ENABLE_TESTS AND NOT (IOS OR ANDROID))

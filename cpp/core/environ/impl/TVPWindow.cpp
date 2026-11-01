@@ -918,3 +918,186 @@ void TVPWindowLayer::OnKeyPress(tjs_uint16 vk, int repeat, bool prevkeystate,
         TVPPostInputEvent(new tTVPOnKeyPressInputEvent(tjsNativeInstance, vk));
     }
 }
+#include "../a11y/NarrationBridge.h"
+
+namespace {
+// 尽早把 visual 的朗读钩子接到规则层（此处是 environ，能拿到平台后端）
+// 无障碍：把游戏内鼠标移到指定窗口图像坐标（只移动、不点击）
+static void TVPNarrationMoveMouseImpl(int x, int y) {
+    tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
+    if(!win)
+        return;
+    if(x < 0 || y < 0) {
+        // 负坐标：用游戏自己记录的光标位置（图像坐标），即「移到手指刚点的位置」
+        if(!TVPWindowLayer::_currentWindowLayer)
+            return;
+        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
+        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
+    }
+    TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y,
+                                                    TVPGetCurrentShiftKeyState()),
+                      TVP_EPT_DISCARDABLE);
+}
+
+// 无障碍：屏幕像素 → 游戏内鼠标。界面/控件坐标是像素，引擎鼠标事件要图像坐标，
+// 这里按 GLView 视口与图层缩放比换算（与 SetCursorPos 互为逆运算）。
+static void TVPNarrationHoverPixelsImpl(int px, int py) {
+    TVPWindowLayer *lay = TVPWindowLayer::_currentWindowLayer;
+    if(!lay || !lay->PrimaryLayerArea)
+        return;
+    cocos2d::GLView *glview = cocos2d::Director::getInstance()->getOpenGLView();
+    if(!glview)
+        return;
+    const float sx = glview->getScaleX();
+    const float sy = glview->getScaleY();
+    if(sx == 0.0f || sy == 0.0f)
+        return;
+    const cocos2d::Rect vp = glview->getViewPortRect();
+    const cocos2d::Size frame = glview->getFrameSize();
+    const cocos2d::Vec2 world((px - vp.origin.x) / sx,
+                              (frame.height - py - vp.origin.y) / sy);
+    const cocos2d::Vec2 local = lay->PrimaryLayerArea->convertToNodeSpace(world);
+    const int ix = (int) local.x;
+    const int iy = (int) (lay->PrimaryLayerArea->getContentSize().height - local.y);
+    TVPNarrationMoveMouseImpl(ix, iy);
+}
+
+// 无障碍：在游戏内发一次真正的右键（长按手势 → 游戏自己的右键菜单）
+static void TVPNarrationRightClickImpl(int x, int y) {
+    tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
+    if(!win)
+        return;
+    const tjs_uint32 shift = TVPGetCurrentShiftKeyState();
+    if(x < 0 || y < 0) {
+        if(!TVPWindowLayer::_currentWindowLayer)
+            return;
+        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
+        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
+    }
+    TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y, shift));
+    TVPPostInputEvent(new tTVPOnMouseDownInputEvent(win, x, y, ::mbRight, shift));
+    TVPPostInputEvent(new tTVPOnMouseUpInputEvent(win, x, y, ::mbRight, shift));
+}
+
+// 无障碍：在窗口图像坐标处注入一次左键按下 + 抬起。
+// 脚本图层画的按钮只认这条通道（它们没有 cocos 控件），按下/抬起与真实点击同路。
+static void TVPNarrationTapImageImpl(int x, int y) {
+    tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
+    if(!win)
+        return;
+    const tjs_uint32 shift = TVPGetCurrentShiftKeyState();
+    if(x < 0 || y < 0) {
+        if(!TVPWindowLayer::_currentWindowLayer)
+            return;
+        x = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseX;
+        y = (int) TVPWindowLayer::_currentWindowLayer->_LastMouseY;
+    }
+    TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(win, x, y, shift));
+    TVPPostInputEvent(new tTVPOnMouseDownInputEvent(win, x, y, ::mbLeft, shift));
+    TVPPostInputEvent(new tTVPOnMouseUpInputEvent(win, x, y, ::mbLeft, shift));
+}
+
+// 无障碍：枚举脚本层里「图片画出来的按钮」。
+// KAG 的按钮就是带事件的 Layer，名字和矩形引擎里本来就有，不需要 OCR。
+// 判据（全部立刻可验证，不猜）：
+//   ① 可见、有图像、有内部名字；
+//   ② 不是全屏层（全屏的多半是背景层/消息层/推进层，那里点击没有独立含义）；
+//   ③ 在它自己的中心点上，最前面的图层就是它（否则点击会被上层吃掉，读了也没用）。
+static void TVPNarrationCollectLayerButtonsImpl(std::vector<TVPNarration::LayerButton> &out) {
+    tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
+    if(!win)
+        return;
+    iTVPDrawDevice *dev = win->GetDrawDevice();
+    if(!dev)
+        return;
+    tTJSNI_BaseLayer *primary = dev->GetPrimaryLayer();
+    if(!primary)
+        return;
+
+    const tTVPRect area = primary->GetRect();
+    const tjs_int pw = area.get_width() > 0 ? area.get_width() : 1;
+    const tjs_int ph = area.get_height() > 0 ? area.get_height() : 1;
+
+    struct Collector {
+        std::vector<TVPNarration::LayerButton> *out;
+        tTJSNI_BaseLayer *primary;
+        tjs_int pw, ph;
+
+        void Walk(tTJSNI_BaseLayer *parent, int depth) {
+            if(!parent || depth > 8)
+                return;
+            const tjs_uint n = parent->GetCount();
+            for(tjs_uint i = 0; i < n; ++i) {
+                tTJSNI_BaseLayer *child = parent->GetChildren((tjs_int) i);
+                Consider(child);
+                Walk(child, depth + 1);
+            }
+        }
+
+        void Consider(tTJSNI_BaseLayer *layer) {
+            if(!layer || !layer->GetVisible() || !layer->GetParentVisible())
+                return;
+            if(!layer->GetHasImage())
+                return;
+            const tTVPRect rect = layer->GetRect();
+            const tjs_int w = rect.get_width(), h = rect.get_height();
+            if(w < 6 || h < 6)
+                return;
+            if((int64_t) w * h > (int64_t) pw * ph * 9 / 10)
+                return;  // 全屏层不是按钮
+            const ttstr &name = layer->GetName();
+            const tjs_char *nameText = name.c_str();
+            tjs_int cx = w / 2, cy = h / 2;
+            layer->ToPrimaryCoordinates(cx, cy);
+            if(cx < 0 || cy < 0 || cx >= pw || cy >= ph)
+                return;
+            tTJSNI_BaseLayer *front = primary->GetMostFrontChildAt(cx, cy);
+            bool reachable = false;
+            for(tTJSNI_BaseLayer *cur = front; cur; cur = cur->GetParent())
+                if(cur == layer) {
+                    reachable = true;
+                    break;
+                }
+            if(!reachable)
+                return;  // 点击到不了它
+
+            size_t length = 0;
+            while(nameText && nameText[length])
+                ++length;
+            TVPNarration::LayerButton button;
+            // 没有内部名字也收：无障碍层会保留这一项（能聚焦、能点），只是不读它，
+            // 绝不编造名字。
+            button.label = length ? TVPNarration::ToUtf8(nameText, length) : std::string();
+            button.x = (int) cx;
+            button.y = (int) cy;
+            out->push_back(button);
+        }
+    };
+
+    Collector collector = { &out, primary, pw, ph };
+    collector.Walk(primary, 0);
+}
+
+struct TVPNarrationInstaller {
+    TVPNarrationInstaller() {
+        TVPNarration::InstallLayerTextSink();
+        TVPNarration::SetMouseMoveHandler(&TVPNarrationMoveMouseImpl);
+        TVPNarration::SetHoverPixelsHandler(&TVPNarrationHoverPixelsImpl);
+        TVPNarration::SetRightClickHandler(&TVPNarrationRightClickImpl);
+        TVPNarration::SetTapImageHandler(&TVPNarrationTapImageImpl);
+        TVPNarration::SetCollectLayerButtonsHandler(&TVPNarrationCollectLayerButtonsImpl);
+    }
+} g_tvpNarrationInstaller;
+} // namespace
+
+// 无障碍：Java 侧「确认」手势以窗口图像坐标合成一次左键点击，
+// 交给游戏脚本（KAG 选项层）自己命中选择。
+// 由 platforms/android/cpp/krkr2_android.cpp 的 nativeNarrationTap 调用。
+void TVPNarrationActivateImageAt(int x, int y) {
+    tTJSNI_Window *win = TVPWindowLayer::TVPGetActiveWindow();
+    if(!win)
+        return;
+    const tjs_uint32 shift = TVPGetCurrentShiftKeyState();
+    TVPPostInputEvent(new tTVPOnMouseDownInputEvent(win, x, y, ::mbLeft, shift));
+    TVPPostInputEvent(new tTVPOnMouseUpInputEvent(win, x, y, ::mbLeft, shift));
+}

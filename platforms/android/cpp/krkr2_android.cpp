@@ -368,3 +368,43 @@ Java_org_tvp_kirikiri2_KR2Activity_nativeOnLowMemory(JNIEnv *env, jclass cls) {
     });
 }
 }
+#if defined(__ANDROID__)
+#include "../../../cpp/core/environ/a11y/NarrationBridge.h"
+
+extern void TVPNarrationActivateImageAt(int x, int y);
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationTap(JNIEnv *, jclass, jint x,
+                                                      jint y) {
+    TVPNarrationActivateImageAt((int) x, (int) y);
+}
+
+// 无障碍手势：Java 侧把 CPyMO 的滑动/连击手势翻译成动作号传进来
+extern "C" JNIEXPORT void JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationAction(JNIEnv *, jclass, jint action) {
+    TVPNarration::DoAction((int) action);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationShutdown(JNIEnv *, jclass) {
+    TVPNarration::Shutdown();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationSetEnabled(JNIEnv *, jclass,
+                                                             jboolean on) {
+    TVPNarration::SetEnabled(on == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationIsEnabled(JNIEnv *, jclass) {
+    return TVPNarration::IsEnabled() ? JNI_TRUE : JNI_FALSE;
+}
+
+// 细粒度设置位：1 台词 2 选项 4 说话人 8 音效 16 振动
+extern "C" JNIEXPORT void JNICALL
+Java_org_tvp_kirikiri2_KR2Activity_nativeNarrationConfig(JNIEnv *, jclass,
+                                                         jint flags) {
+    TVPNarration::SetConfig((unsigned) flags);
+}
+#endif

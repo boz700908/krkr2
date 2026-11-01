@@ -45,6 +45,7 @@
 #include "RenderManager.h"
 #include <cstdlib>
 #include "FontImpl.h"
+#include "../environ/a11y/NarrationSink.h"
 
 extern void TVPSetFontRasterizer(tjs_int index);
 
@@ -4459,6 +4460,13 @@ void tTJSNI_BaseLayer::DrawText(tjs_int x, tjs_int y, const ttstr &text,
     }
 
     ApplyFont();
+
+    // 无障碍：把本层正在显示的完整文本交给朗读规则层（平台无关，无钩子时空转）。
+    // 文本区域用层图像尺寸近似——KAG 的消息层/选项层/名字层本身就是文本框。
+    TVPNarration::NotifyLayerTextWide(
+        static_cast<long>(reinterpret_cast<intptr_t>(this)), x, y,
+        static_cast<int>(MainImage->GetWidth()), static_cast<int>(MainImage->GetHeight()),
+        text.c_str(), 0);
 
     tTVPComplexRect r;
 
