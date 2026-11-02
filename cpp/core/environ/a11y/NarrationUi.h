@@ -28,6 +28,11 @@
 
 namespace TVPNarration {
 
+class Node;
+
+// 表单栈/表单内容变化时重建页面模型（定义在本文件末尾，外层命名空间）
+inline void NotifyUiChanged(cocos2d::Node *container);
+
 namespace detail_ui {
 
 // 真实点击注入：与 Java nativeTouchesBegin/End 走同一条 GLView 通路
@@ -428,8 +433,6 @@ inline cocos2d::Node *&CurrentContainer() {
     static cocos2d::Node *node = nullptr;
     return node;
 }
-
-inline void NotifyUiChanged(cocos2d::Node *container);
 
 // 焦点项的值为滑条时：按 ±5% 拖一档，然后立刻刷新页面模型（朗读新值）
 inline void OnAdjust(int index, int delta) {
