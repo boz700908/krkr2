@@ -44,6 +44,9 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${STORAGE_PUBLIC_INCLUDES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${UTILS_PATH}
     ${CMAKE_SOURCE_DIR}/cpp/core/environ
+    # base/StorageIntf.cpp 直接 include "XP3Archive.h"；
+    # archive_xp3 依赖本目标，不能再反向链接，只借头文件目录
+    ${CMAKE_SOURCE_DIR}/cpp/core/archive/xp3
 )
 target_link_libraries(${PROJECT_NAME} PUBLIC core_storage_archive)
 
